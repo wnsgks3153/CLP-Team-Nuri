@@ -23,9 +23,10 @@
 
 
 ## 설계
-( )
-
+![develop_design](https://github.com/user-attachments/assets/82745150-8dbb-4f3e-809c-9e0eda2ed440)
+![triangulation](https://github.com/user-attachments/assets/7cf83935-880a-4e37-9243-70ccbbbc967d)
 ## 개발 과정
+![development_process](https://github.com/user-attachments/assets/9a3eb2a8-933b-45b1-ae5b-e5ce617658b3)
 
 
 ## 성과
