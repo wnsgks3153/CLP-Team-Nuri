@@ -2,77 +2,49 @@ import serial
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 
-# 설정: 블루투스 포트와 통신 속도
-PORT = 'COM5'  # 또는 'COM6'
-BAUD_RATE = 115200
+# Bluetooth 포트 설정 (COM5 또는 COM6에 연결된 경우)
+bluetooth_port = 'COM6'  # 또는 'COM5'
+baud_rate = 115200
+ser = serial.Serial(bluetooth_port, baud_rate)
 
-def parse_data(data):
-    """
-    수신 데이터를 파싱하여 거리와 좌표 정보를 반환합니다.
-    데이터 형식 예제:
-    "a0 = 1.03\na1 = 0.86\na2 = 1.03\na3 = 1.03\n(x,y) = (0.52, 0.43)"
-    """
-    try:
-        lines = data.strip().split('\n')
-        parsed = {}
-        for line in lines:
-            if line.startswith('a'):
-                key, val = line.split('=')
-                parsed[key.strip()] = float(val.strip())
-            elif line.startswith('(x,y)'):
-                coords = line.split('=')[1].strip().strip('()').split(',')
-                parsed['X'] = float(coords[0])
-                parsed['Y'] = float(coords[1])
-        return parsed
-    except Exception as e:
-        print(f"데이터 파싱 오류: {e}")
-        return None
+# 앵커 0, 1, 2의 좌표 설정 (예시 좌표)
+anchor_coords = {
+    0: (0, 0),  # 앵커 0
+    1: (0, 4.23),   # 앵커 1
+    2: (7.04, 4.23)     # 앵커 2
+}
 
-def update(frame):
-    """실시간 데이터로 그래프 업데이트"""
-    global serial_connection
-    try:
-        if serial_connection.in_waiting:
-            raw_data = serial_connection.read_until(b'\n(x,y)').decode('utf-8')
-            parsed_data = parse_data(raw_data)
-
-            if parsed_data:
-                # 앵커와 현재 좌표 업데이트
-                current_position.set_data(parsed_data['X'], parsed_data['Y'])
-
-                # 그래프 제목 업데이트
-                ax.set_title(f"X: {parsed_data['X']:.2f}, Y: {parsed_data['Y']:.2f}")
-                fig.canvas.draw()
-    except Exception as e:
-        print(f"업데이트 오류: {e}")
-
-# 시리얼 포트 연결
-serial_connection = serial.Serial(PORT, BAUD_RATE, timeout=1)
-
-# 앵커 위치 설정
-anchor_positions = [(0, 0), (1, 0), (1, 1), (0, 1)]  # 예시 좌표 (a0, a1, a2, a3)
-
-# Matplotlib 초기화
+# 실시간 플롯 설정
 fig, ax = plt.subplots()
-ax.set_xlim(-0.5, 1.5)  # X축 범위
-ax.set_ylim(-0.5, 1.5)  # Y축 범위
-ax.set_xlabel("X")
-ax.set_ylabel("Y")
-ax.grid(True)
+ax.set_xlim(-8, 8)  # x축 범위
+ax.set_ylim(-8, 8)  # y축 범위
 
-# 앵커를 그래프에 표시
-for idx, (x, y) in enumerate(anchor_positions):
-    ax.scatter(x, y, c='red', label=f"Anchor a{idx}")
+# 앵커 좌표를 빨간 점으로 표시
+for anchor, (x, y) in anchor_coords.items():
+    ax.plot(x, y, 'ro')  # 빨간색 점 (앵커)
 
-# 현재 위치를 표시할 객체 생성
-current_position, = ax.plot([], [], 'bo', label="Current Position")
-ax.legend()
+# 움직이는 태그의 좌표를 표시할 점 (파란색 점)
+point, = ax.plot([], [], 'bo')
 
-# 실시간 업데이트 설정
-ani = FuncAnimation(fig, update, interval=100)
+# 데이터 업데이트 함수
+def update(frame):
+    # Bluetooth로부터 데이터 읽기
+    if ser.in_waiting > 0:
+        data = ser.readline().decode('utf-8').strip()
+        print(f"Received data: {data}")  # 받은 데이터 확인
+        
+        if data.startswith("(x,y) = ("):
+            # 좌표 데이터에서 불필요한 문자열 제거
+            data = data[9:-1]  # "(x,y) = ("와 ")" 제거
+            x, y = map(float, data.split(','))
+            
+            # 좌표 업데이트 (x, y는 리스트로 전달)
+            point.set_data([x], [y])
+    
+    return point,
 
-# 그래프 출력
+
+# 애니메이션 설정
+ani = FuncAnimation(fig, update, frames=range(100), interval=100, blit=True)
+
 plt.show()
-
-# 종료 시 연결 닫기
-serial_connection.close()

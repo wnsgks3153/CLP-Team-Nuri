@@ -5,7 +5,7 @@
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-#define RNG_DELAY_MS 50
+#define RNG_DELAY_MS 100
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
 #define ALL_MSG_COMMON_LEN 10
@@ -49,8 +49,8 @@ extern dwt_txconfig_t txconfig_options;
 
 // Fixed locations of the 
 float fx0 = 0.0, fy0 = 0.0, a0 = 0.0;  // random number used to disqualify uwb anchor point
-float fx1 = 0.0, fy1 = 2.4, a1 = 0.0;
-float fx2 = 3.6, fy2 = 2.4, a2 = 0.0;
+float fx1 = 0.0, fy1 = 4.23, a1 = 0.0;
+float fx2 = 7.04, fy2 = 4.23, a2 = 0.0;
 float fx3 = 0.0, fy3 = 0.0, a3 = 0.0;
 float resultArray[12];
 
