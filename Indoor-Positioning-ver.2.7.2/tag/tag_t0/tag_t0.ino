@@ -5,7 +5,7 @@
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-#define RNG_DELAY_MS 500
+#define RNG_DELAY_MS 50
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
 #define ALL_MSG_COMMON_LEN 10
@@ -460,20 +460,36 @@ void loop()
           {a3, fx3, fy3}
       };
 
-  // a 값을 기준으로 정렬
-  qsort(values, 4, sizeof(Value), compare);
+    // 유효한 데이터를 저장할 배열
+    Value filteredValues[4];
+    int validCount = 0;
 
-  // 결과 배열 생성
-  for (int i = 0; i < 4; i++) {
-    resultArray[i * 3] = values[i].fx;
-    resultArray[i * 3 + 1] = values[i].fy;
-    resultArray[i * 3 + 2] = values[i].a;
+    // 유효한 데이터 필터링
+    for (int i = 0; i < 4; i++) {
+        if (values[i].a != 0 || values[i].fx != 0 || values[i].fy != 0) {
+            filteredValues[validCount++] = values[i];
+        }
     }
-  
-  // tag_location 함수 호출
-  tag_location(resultArray[0], resultArray[1], resultArray[2],  // 첫 번째 세트
-               resultArray[3], resultArray[4], resultArray[5],  // 두 번째 세트
-               resultArray[6], resultArray[7], resultArray[8]);
+
+    // 정렬 (유효한 데이터만 정렬)
+    qsort(filteredValues, validCount, sizeof(Value), compare);
+
+    // 결과 배열 생성
+    float resultArray[validCount * 3];
+    for (int i = 0; i < validCount; i++) {
+        resultArray[i * 3] = filteredValues[i].fx;
+        resultArray[i * 3 + 1] = filteredValues[i].fy;
+        resultArray[i * 3 + 2] = filteredValues[i].a;
+    }
+
+    // tag_location 함수 호출 (유효한 데이터만 전달)
+    if (validCount >= 3) { // 최소 3개의 유효 데이터 필요
+        tag_location(resultArray[0], resultArray[1], resultArray[2],  // 첫 번째 세트
+                     resultArray[3], resultArray[4], resultArray[5],  // 두 번째 세트
+                     resultArray[6], resultArray[7], resultArray[8]);
+    } else {
+        SerialBT.println("유효한 데이터가 부족합니다.");
+    }
 }
 
 // 정렬 함수
