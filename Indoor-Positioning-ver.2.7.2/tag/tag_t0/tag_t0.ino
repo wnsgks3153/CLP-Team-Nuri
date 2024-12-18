@@ -49,8 +49,8 @@ extern dwt_txconfig_t txconfig_options;
 
 // Fixed locations of the 
 float fx0 = 0.0, fy0 = 0.0, a0 = 0.0;  // random number used to disqualify uwb anchor point
-float fx1 = 1.0, fy1 = 0.0, a1 = 0.0;
-float fx2 = 1.0, fy2 = 1.0, a2 = 0.0;
+float fx1 = 0.0, fy1 = 2.4, a1 = 0.0;
+float fx2 = 3.6, fy2 = 2.4, a2 = 0.0;
 float fx3 = 0.0, fy3 = 0.0, a3 = 0.0;
 float resultArray[12];
 
