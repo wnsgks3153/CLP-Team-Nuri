@@ -4,7 +4,7 @@
 #define PIN_IRQ 34
 #define PIN_SS 4
 
-#define RNG_DELAY_MS 1000
+#define RNG_DELAY_MS 100
 #define TX_ANT_DLY 16385
 #define RX_ANT_DLY 16385
 #define ALL_MSG_COMMON_LEN 10
@@ -39,6 +39,8 @@ static uint8_t rx_buffer[20];
 static uint32_t status_reg = 0;
 static double tof;
 static double distance;
+static double distance_sum = 0.0;
+static int measurement_count = 0;
 extern dwt_txconfig_t txconfig_options;
 
 void setup()
@@ -155,9 +157,20 @@ void loop()
         tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
         distance = tof * SPEED_OF_LIGHT;
 
-        /* Display computed distance on LCD. */
-        snprintf(dist_str, sizeof(dist_str), "DIST: %3.2f m", distance);
-        test_run_info((unsigned char *)dist_str);
+        /* Accumulate distance and count measurements. */
+        distance_sum += distance;
+        measurement_count++;
+
+        /* Print the average every 50 measurements. */
+        if (measurement_count == 50)
+        {
+          double average_distance = distance_sum / measurement_count;
+          Serial.print("Average Distance: ");
+          Serial.print(average_distance);
+          Serial.println(" m");
+          distance_sum = 0.0;
+          measurement_count = 0;
+        }
       }
     }
   }

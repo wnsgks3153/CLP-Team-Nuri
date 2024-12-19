@@ -7,7 +7,7 @@
 #define PIN_SS 4                 // SPI Chip Select 핀
 
 // UWB 설정
-#define RNG_DELAY_MS 50          // 거리 계산 지연(ms)
+#define RNG_DELAY_MS 500          // 거리 계산 지연(ms)
 #define TX_ANT_DLY 16385         // 송신 안테나 지연
 #define RX_ANT_DLY 16385         // 수신 안테나 지연
 #define POLL_TX_TO_RESP_RX_DLY_UUS 240  // 송신-수신 지연
