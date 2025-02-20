@@ -23,7 +23,7 @@
 
 |PL|BE|BE|BE|BE|
 |:-------:|:-------:|:-------:|:-------:|:-------:|
-|<img src="https://github.com/user-attachments/assets/a4c63a8e-8ed2-4669-91c3-cf2af900636d" width="200" alt="이준한 프로필 사진">|<img src="https://github.com/user-attachments/assets/6193677a-04c1-4d88-9ca0-d1a6f53b7e7f" width="200" alt="김경수 프로필 사진"|BE|BE|BE|
+|<img src="https://github.com/user-attachments/assets/a4c63a8e-8ed2-4669-91c3-cf2af900636d" width="200" alt="이준한 프로필 사진">|<img src="https://github.com/user-attachments/assets/6193677a-04c1-4d88-9ca0-d1a6f53b7e7f" width="200" alt="김경수 프로필 사진">|BE|BE|BE|
 |이준한|김경수|서상민|김찬우|김태민|
 ||||||
 
