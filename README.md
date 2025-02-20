@@ -21,6 +21,13 @@
 
 # 팀원 소개
 
+|PL|BE|BE|BE|BE|
+|:-------:|:-------:|:-------:|:-------:|:-------:|
+|<img src="https://github.com/user-attachments/assets/a4c63a8e-8ed2-4669-91c3-cf2af900636d" width="200" alt="이준한 프로필 사진">|BE|BE|BE|BE|
+|이준한|김경수|서상민|김찬우|김태민|
+||||||
+
+
 # 사용 기술
 <div style="display:flex; flex-direction:column; align-items:flex-start;">
     <!-- Skills -->
