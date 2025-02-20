@@ -49,10 +49,14 @@ extern dwt_txconfig_t txconfig_options;
 
 // Fixed locations of the 
 float fx0 = 0.0, fy0 = 0.0, a0 = 0.0;  // random number used to disqualify uwb anchor point
-float fx1 = 0.0, fy1 = 4.23, a1 = 0.0;
-float fx2 = 7.04, fy2 = 4.23, a2 = 0.0;
+float fx1 = 1.0, fy1 = 0.0, a1 = 0.0;
+float fx2 = 0.0, fy2 = 1.0, a2 = 0.0;
 float fx3 = 0.0, fy3 = 0.0, a3 = 0.0;
 float resultArray[12];
+
+int count = 0;
+float a0_sum, a1_sum, a2_sum, a3_sum = 0;
+int i;
 
 // 정렬용 구조체
 typedef struct {
@@ -387,14 +391,84 @@ void loop()
     dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
   }
 
-  SerialBT.print("a0 = ");
-  SerialBT.println(a0);
-  SerialBT.print("a1 = ");
-  SerialBT.println(a1);
-  SerialBT.print("a2 = ");
-  SerialBT.println(a2);
-  SerialBT.print("a3 = ");
-  SerialBT.println(a3);
+  if (a0 <= 1){
+      SerialBT.print("a0 = ");
+      a0
+      SerialBT.println(a0);
+  }
+  else{
+
+  }
+
+
+  a0_sum += a0;
+  a1_sum += a1;
+  a2_sum += a2;
+  a3_sum += a3;
+  count++;
+
+  if (a0 <= 1){
+      a0 += 0.05;
+      SerialBT.print("a0 = ");
+      SerialBT.println(a0);
+  }
+  else{
+      a0 -= 0.05;
+      SerialBT.print("a0 = ");
+      SerialBT.println(a0);
+  }
+  delay(100);
+
+  if (a1 <= 1){
+      a1 += 0.05;
+      SerialBT.print("a1 = ");
+      SerialBT.println(a1);
+  }
+  else{
+      a1 -= 0.05;
+      SerialBT.print("a1 = ");
+      SerialBT.println(a1);
+  }
+  delay(100);
+
+  if (a2 <= 1){
+      a2 += 0.05;
+      SerialBT.print("a2 = ");
+      SerialBT.println(a2);
+  }
+  else{
+      a2 -= 0.05;
+      SerialBT.print("a2 = ");
+      SerialBT.println(a2);
+  }
+
+  if (a3 <= 1){
+      a3 += 0.05;
+      SerialBT.print("a3 = ");
+      SerialBT.println(a3);
+  }
+  else{
+      a3 -= 0.05;
+      SerialBT.print("a3 = ");
+      SerialBT.println(a3);
+  }
+  delay(100);
+
+  if (count < 5){
+    return;
+  }
+  
+  a0 = (float)(((int)((a0_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
+  a1 = (float)(((int)((a1_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
+  a2 = (float)(((int)((a2_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
+  a3 = (float)((int)((a3_sum / 5) * 100 + 0.5)) / 100.0;
+
+  a0_sum = 0; 
+  a1_sum = 0;
+  a2_sum = 0;
+  a3_sum = 0;
+  
+  count = 0;
 
   Value values[4] = {
           {a0, fx0, fy0},
