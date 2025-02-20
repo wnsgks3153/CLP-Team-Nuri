@@ -1,13 +1,11 @@
-## 🙌 안녕하세요. 팀 누리(NURI)입니다.
+# 🙌 안녕하세요. 팀 누리(NURI)입니다.
 
 
-
-## 프로젝트 소개
+# 프로젝트 소개
 - Makerfabs사의 **UWB-DW3000 모듈**을 사용하여 <u>ESP_NOW, 블루투스, 와이파이, 등</u>과 같은 통신 방식을 사용하여, 모듈 간 거리를 측정한 다음 실내에서 사용자의 위치를 실시간으로 표현할 수 있는 시스템을 구현합니다.
 
-<details><summary>업데이트 내역(클릭)
-</summary>
-
+<details>
+<summary>업데이트 내역(클릭)</summary>
 - 2024.11.18. Makerfabs WIKI 공식 문서 예제 업로드
 - 2024.11.25. Indoor-Positioning-WIFI 예제 업로드
 - 2024.11.27. Indoor-Positioning 예제 업로드
@@ -21,12 +19,46 @@
 - 2024.12.09. 계산식 최적화
 </details>
 
+# 팀원 소개
 
-## 설계
+# 사용 기술
+<div style="display:flex; flex-direction:column; align-items:flex-start;">
+    <!-- Skills -->
+    <p><strong>Skills</strong></p>
+    <div>
+        <img src="https://img.shields.io/badge/C-00599C?style=for-the-badge&logo=c&logoColor=white">
+        <img src="https://img.shields.io/badge/C%2B%2B-00599C?style=for-the-badge&logo=c%2B%2B&logoColor=white">
+        <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white"> 
+    </div>
+    <br>
+    <!-- OS -->
+    <p><strong>OS</strong></p>
+    <div>
+        <img src="https://img.shields.io/badge/Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white"> 
+    </div>
+    <br>
+    <!-- IDE -->
+    <p><strong>IDE</strong></p>
+    <div>
+        <img src="https://img.shields.io/badge/Arduino_IDE-00979D?style=for-the-badge&logo=arduino&logoColor=white">
+        <img src="https://img.shields.io/badge/Visual_Studio-5C2D91?style=for-the-badge&logo=visual%20studio&logoColor=white"> 
+        <img src="https://img.shields.io/badge/Visual_Studio_Code-0078D4?style=for-the-badge&logo=visual%20studio%20code&logoColor=white"> 
+    </div>
+    <br>
+    <!-- Others -->
+    <p><strong>Others</strong></p>
+    <div>
+        <img src="https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white">
+        <img src="https://img.shields.io/badge/Discord-7289DA?style=for-the-badge&logo=discord&logoColor=white"> 
+        <img src="https://img.shields.io/badge/GIT-E44C30?style=for-the-badge&logo=git&logoColor=white"> 
+    </div>
+</div>
+
+# 설계
 ![develop_design](https://github.com/user-attachments/assets/82745150-8dbb-4f3e-809c-9e0eda2ed440)
 ![triangulation](https://github.com/user-attachments/assets/7cf83935-880a-4e37-9243-70ccbbbc967d)
-## 개발 과정
+# 개발 과정
 ![development_process](https://github.com/user-attachments/assets/9a3eb2a8-933b-45b1-ae5b-e5ce617658b3)
 
 
-## 성과
+# 성과
