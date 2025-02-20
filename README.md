@@ -5,7 +5,10 @@
 |<span style="font-size:30px;">2025년 제 71차 한국컴퓨터정보학회 동계학술대회 우수논문상 수상</span>|
 |:-:|
 |<img src="https://github.com/user-attachments/assets/3833426b-6b7f-4569-9858-1f0d5839f6a1" width="400" alt="이준한 프로필 사진">|
-|[■ 한국컴퓨터정보학회 공식 홈페이지](https://ksci.re.kr/) &emsp;&emsp;&emsp; [■ 2025 한국컴퓨터정보학회 온라인 사이트](http://conference-2025-01.ksci.re.kr) &emsp;&emsp;&emsp; [■ 2025 한국컴퓨터정보학회 논문집](https://drive.google.com/file/d/18L7SNWk0Z23dMfB6KwL1rUP84P-nkV0x/view)|
+|[■ 한국컴퓨터정보학회 공식 홈페이지](https://ksci.re.kr/)<br>[■ 2025 한국컴퓨터정보학회 온라인 사이트](http://conference-2025-01.ksci.re.kr) &emsp;&emsp;&emsp; [■ 2025 한국컴퓨터정보학회 논문집](https://drive.google.com/file/d/18L7SNWk0Z23dMfB6KwL1rUP84P-nkV0x/view)|
+
+<strong><span style="font-size:26px;">■ 본 프로젝트는 2024년도 경운대학교 캡스톤디자인 활동을 통해 제작되었습니다.</span></strong>
+
 - Makerfabs사의 **UWB-DW3000 모듈**을 사용하여 <u>ESP_NOW, 블루투스, 와이파이, 등</u>과 같은 통신 방식을 사용하여, 모듈 간 거리를 측정한 다음 실내에서 사용자의 위치를 실시간으로 표현할 수 있는 시스템을 구현합니다.
 
 <details>
@@ -25,10 +28,10 @@
 
 # 팀원 소개
 
-|PL|BE|BE|BE|BE|
+|이준한|김경수|서상민|김찬우|김태민|
 |:-------:|:-------:|:-------:|:-------:|:-------:|
 |<img src="https://github.com/user-attachments/assets/a4c63a8e-8ed2-4669-91c3-cf2af900636d" width="200" alt="이준한 프로필 사진">|<img src="https://github.com/user-attachments/assets/6193677a-04c1-4d88-9ca0-d1a6f53b7e7f" width="200" alt="김경수 프로필 사진">|BE|BE|BE|
-|이준한|김경수|서상민|김찬우|김태민|
+||||||
 ||||||
 
 
