@@ -1,556 +1,119 @@
-#include "dw3000.h"
-#include "BluetoothSerial.h"
+#include "dw3000.h"              // DW3000 UWB 모듈 제어 라이브러리
+#include "BluetoothSerial.h"     // ESP32 Bluetooth 통신 라이브러리
 
-#define PIN_RST 27
-#define PIN_IRQ 34
-#define PIN_SS 4
+// 핀 설정
+#define PIN_RST 27               // Reset 핀
+#define PIN_IRQ 34               // Interrupt 핀
+#define PIN_SS 4                 // SPI Chip Select 핀
 
-#define RNG_DELAY_MS 500
-#define TX_ANT_DLY 16385
-#define RX_ANT_DLY 16385
-#define ALL_MSG_COMMON_LEN 10
-#define ALL_MSG_SN_IDX 2
-#define RESP_MSG_POLL_RX_TS_IDX 10
-#define RESP_MSG_RESP_TX_TS_IDX 14
-#define RESP_MSG_TS_LEN 4
-#define POLL_TX_TO_RESP_RX_DLY_UUS 240
-#define RESP_RX_TIMEOUT_UUS 400
+// UWB 설정
+#define RNG_DELAY_MS 500          // 거리 계산 지연(ms)
+#define TX_ANT_DLY 16385         // 송신 안테나 지연
+#define RX_ANT_DLY 16385         // 수신 안테나 지연
+#define POLL_TX_TO_RESP_RX_DLY_UUS 240  // 송신-수신 지연
+#define RESP_RX_TIMEOUT_UUS 400  // 응답 수신 타임아웃
 
-BluetoothSerial SerialBT;
+BluetoothSerial SerialBT;        // Bluetooth 객체 생성
 
-/* Default communication configuration. We use default non-STS DW mode. */
-static dwt_config_t config = {
-    5,                /* Channel number. */
-    DWT_PLEN_128,     /* Preamble length. Used in TX only. */
-    DWT_PAC8,         /* Preamble acquisition chunk size. Used in RX only. */
-    9,                /* TX preamble code. Used in TX only. */
-    9,                /* RX preamble code. Used in RX only. */
-    1,                /* 0 to use standard 8 symbol SFD, 1 to use non-standard 8 symbol, 2 for non-standard 16 symbol SFD and 3 for 4z 8 symbol SDF type */
-    DWT_BR_6M8,       /* Data rate. */
-    DWT_PHRMODE_STD,  /* PHY header mode. */
-    DWT_PHRRATE_STD,  /* PHY header rate. */
-    (129 + 8 - 8),    /* SFD timeout (preamble length + 1 + SFD length - PAC size). Used in RX only. */
-    DWT_STS_MODE_OFF, /* STS disabled */
-    DWT_STS_LEN_64,   /* STS length see allowed values in Enum dwt_sts_lengths_e */
-    DWT_PDOA_M0       /* PDOA mode off */
-};
-
+// 송신 및 수신 메시지 정의
 static uint8_t tx_poll_msg_t0[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'T', 'A', 'G', '0', 0xE0, 0, 0};
 static uint8_t rx_resp_msg_a0[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'A', 'N', 'C', '0', 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8_t rx_resp_msg_a1[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'A', 'N', 'C', '1', 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8_t rx_resp_msg_a2[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'A', 'N', 'C', '2', 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8_t rx_resp_msg_a3[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'A', 'N', 'C', '3', 0xE1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-static uint8_t frame_seq_nb = 0;
-static uint8_t rx_buffer[20];
-static uint32_t status_reg = 0;
-static double tof;
-static double distance;
-extern dwt_txconfig_t txconfig_options;
 
-// Fixed locations of the 
-float fx0 = 0.0, fy0 = 0.0, a0 = 0.0;  // random number used to disqualify uwb anchor point
-float fx1 = 1.0, fy1 = 0.0, a1 = 0.0;
-float fx2 = 0.0, fy2 = 1.0, a2 = 0.0;
-float fx3 = 0.0, fy3 = 0.0, a3 = 0.0;
-float resultArray[12];
+// 거리 계산 결과 저장 변수
+float distances[4] = {0.0, 0.0, 0.0, 0.0};
+int closest_anchors[3] = {0, 1, 2}; // 가장 가까운 3개의 앵커 인덱스
 
-int count = 0;
-float a0_sum, a1_sum, a2_sum, a3_sum = 0;
-int i;
+void setup() {
+  SerialBT.begin("ESP32_BT_Module");  // 블루투스 모듈 초기화
+  Serial.begin(115200);              // 디버깅용 시리얼 통신
 
-// 정렬용 구조체
-typedef struct {
-    float a;  // a 값
-    float fx; // fx 값
-    float fy; // fy 값
-} Value;
+  spiBegin(PIN_IRQ, PIN_RST);        // SPI 초기화
+  spiSelect(PIN_SS);                 // SPI 디바이스 선택
 
-Value values[4] = {
-          {a0, fx0, fy0},
-          {a1, fx1, fy1},
-          {a2, fx2, fy2},
-          {a3, fx3, fy3}
-      };
-
-void setup()
-{
-  SerialBT.begin("ESP32_BT_Module"); // 블루투스 장치 이름 설정
-  Serial.begin(115200); // 디버깅용 시리얼 통신 시작
-  
-  UART_init();
-
-  spiBegin(PIN_IRQ, PIN_RST);
-  spiSelect(PIN_SS);
-
-  delay(2); // Time needed for DW3000 to start up (transition from INIT_RC to IDLE_RC, or could wait for SPIRDY event)
-
-  while (!dwt_checkidlerc()) // Need to make sure DW IC is in IDLE_RC before proceeding
-  {
-    UART_puts("IDLE FAILED\r\n");
-    while (1)
-      ;
+  // DW3000 초기화
+  if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR) {
+    while (1);  // 초기화 실패 시 멈춤
   }
 
-  if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
-  {
-    UART_puts("INIT FAILED\r\n");
-    while (1)
-      ;
-  }
-
-  // Enabling LEDs here for debug so that for each TX the D1 LED will flash on DW3000 red eval-shield boards.
-  dwt_setleds(DWT_LEDS_ENABLE | DWT_LEDS_INIT_BLINK);
-
-  /* Configure DW IC. See NOTE 6 below. */
-  if (dwt_configure(&config)) // if the dwt_configure returns DWT_ERROR either the PLL or RX calibration has failed the host should reset the device
-  {
-    UART_puts("CONFIG FAILED\r\n");
-    while (1)
-      ;
-  }
-
-  /* Configure the TX spectrum parameters (power, PG delay and PG count) */
-  dwt_configuretxrf(&txconfig_options);
-
-  /* Apply default antenna delay value. See NOTE 2 below. */
+  // 안테나 및 수신 타임아웃 설정
   dwt_setrxantennadelay(RX_ANT_DLY);
   dwt_settxantennadelay(TX_ANT_DLY);
-
-  /* Set expected response's delay and timeout. See NOTE 1 and 5 below.
-   * As this example only handles one incoming frame with always the same delay and timeout, those values can be set here once for all. */
   dwt_setrxaftertxdelay(POLL_TX_TO_RESP_RX_DLY_UUS);
   dwt_setrxtimeout(RESP_RX_TIMEOUT_UUS);
-
-  /* Next can enable TX/RX states output on GPIOs 5 and 6 to help debug, and also TX/RX LEDs
-   * Note, in real low power applications the LEDs should not be used. */
-  dwt_setlnapamode(DWT_LNA_ENABLE | DWT_PA_ENABLE);
-
-  //Serial.println("Tag T0 Setup Complete...");
-
 }
 
-void loop()
-{
-  //***********************Anchor A0******************************************
-  //Serial.println("Probing Anchor A0...");
-  //a0 = 12.3;
-  // probe_anchor(tx_poll_msg_t0,rx_resp_msg_a0);
-  /* Write frame data to DW IC and prepare transmission. See NOTE 7 below. */
-  tx_poll_msg_t0[ALL_MSG_SN_IDX] = frame_seq_nb;
-  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-  dwt_writetxdata(sizeof(tx_poll_msg_t0), tx_poll_msg_t0, 0); /* Zero offset in TX buffer. */
-  dwt_writetxfctrl(sizeof(tx_poll_msg_t0), 0, 1);          /* Zero offset in TX buffer, ranging. */
-
-  /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
-   * set by dwt_setrxaftertxdelay() has elapsed. */
-  dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-
-  /* We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 8 below. */
-  while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-  {
-  };
-
-  /* Increment frame sequence number after transmission of the poll message (modulo 256). */
-  frame_seq_nb++;
-
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
-  {
-    uint32_t frame_len;
-
-    /* Clear good RX frame event in the DW IC status register. */
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-
-    /* A frame has been received, read it into the local buffer. */
-    frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    if (frame_len <= sizeof(rx_buffer))
-    {
-      dwt_readrxdata(rx_buffer, frame_len, 0);
-
-      /* Check that the frame is the expected response from the companion "SS TWR responder" example.
-       * As the sequence number field of the frame is not relevant, it is cleared to simplify the validation of the frame. */
-      rx_buffer[ALL_MSG_SN_IDX] = 0;
-      if (memcmp(rx_buffer, rx_resp_msg_a0, ALL_MSG_COMMON_LEN) == 0)
-      {
-        uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-        int32_t rtd_init, rtd_resp;
-        float clockOffsetRatio;
-
-        /* Retrieve poll transmission and response reception timestamps. See NOTE 9 below. */
-        poll_tx_ts = dwt_readtxtimestamplo32();
-        resp_rx_ts = dwt_readrxtimestamplo32();
-
-        /* Read carrier integrator value and calculate clock offset ratio. See NOTE 11 below. */
-        clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
-
-        /* Get timestamps embedded in response message. */
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
-
-        /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
-        rtd_init = resp_rx_ts - poll_tx_ts;
-        rtd_resp = resp_tx_ts - poll_rx_ts;
-
-        tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-        distance = tof * SPEED_OF_LIGHT;
-
-        /* Display computed distance on LCD. */
-        // snprintf(dist_str, sizeof(dist_str), "DIST: %3.2f m", distance);
-        snprintf(dist_str, sizeof(dist_str), "%3.2f", distance);
-        test_run_info((unsigned char *)dist_str);
-
-        a0 = atof(dist_str);
-        delay(RNG_DELAY_MS);
-      }
-    }
-  }
-  else
-  {
-    /* Clear RX error/timeout events in the DW IC status register. */
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+void loop() {
+  // 각 앵커와 거리 측정
+  for (int i = 0; i < 4; i++) {
+    distances[i] = measure_distance(tx_poll_msg_t0, rx_resp_msg_a0 + i * sizeof(rx_resp_msg_a0));
+    delay(RNG_DELAY_MS);
   }
 
+  // 가장 가까운 3개의 앵커 선택
+  select_closest_anchors(distances, 4);
 
-  //***********************Anchor A1******************************************
-  tx_poll_msg_t0[ALL_MSG_SN_IDX] = frame_seq_nb;
-  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-  dwt_writetxdata(sizeof(tx_poll_msg_t0), tx_poll_msg_t0, 0); /* Zero offset in TX buffer. */
-  dwt_writetxfctrl(sizeof(tx_poll_msg_t0), 0, 1);          /* Zero offset in TX buffer, ranging. */
-
-  dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-
-  while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-  {
-  };
-
-  frame_seq_nb++;
-
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
-  {
-    uint32_t frame_len;
-
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-
-    frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    if (frame_len <= sizeof(rx_buffer))
-    {
-      dwt_readrxdata(rx_buffer, frame_len, 0);
-
-      rx_buffer[ALL_MSG_SN_IDX] = 0;
-      if (memcmp(rx_buffer, rx_resp_msg_a1, ALL_MSG_COMMON_LEN) == 0)
-      {
-        uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-        int32_t rtd_init, rtd_resp;
-        float clockOffsetRatio;
-
-        poll_tx_ts = dwt_readtxtimestamplo32();
-        resp_rx_ts = dwt_readrxtimestamplo32();
-
-        clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
-
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
-
-        rtd_init = resp_rx_ts - poll_tx_ts;
-        rtd_resp = resp_tx_ts - poll_rx_ts;
-
-        tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-        distance = tof * SPEED_OF_LIGHT;
-
-        snprintf(dist_str, sizeof(dist_str), "%3.2f", distance);
-        test_run_info((unsigned char *)dist_str);
-
-        a1 = atof(dist_str);
-        delay(RNG_DELAY_MS);
-      }
-    }
+  // 선택된 3개의 앵커와 거리 데이터 JSON 형식으로 전송
+  float closest_distances[3];
+  for (int i = 0; i < 3; i++) {
+    closest_distances[i] = distances[closest_anchors[i]];
   }
-  else
-  {
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-  }
-
-
-
-  //***********************Anchor A2******************************************
-  tx_poll_msg_t0[ALL_MSG_SN_IDX] = frame_seq_nb;
-  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-  dwt_writetxdata(sizeof(tx_poll_msg_t0), tx_poll_msg_t0, 0); /* Zero offset in TX buffer. */
-  dwt_writetxfctrl(sizeof(tx_poll_msg_t0), 0, 1);          /* Zero offset in TX buffer, ranging. */
-
-  dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-
-  while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-  {
-  };
-
-  frame_seq_nb++;
-
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
-  {
-    uint32_t frame_len;
-
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-
-    frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    if (frame_len <= sizeof(rx_buffer))
-    {
-      dwt_readrxdata(rx_buffer, frame_len, 0);
-
-      rx_buffer[ALL_MSG_SN_IDX] = 0;
-      if (memcmp(rx_buffer, rx_resp_msg_a2, ALL_MSG_COMMON_LEN) == 0)
-      {
-        uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-        int32_t rtd_init, rtd_resp;
-        float clockOffsetRatio;
-
-        poll_tx_ts = dwt_readtxtimestamplo32();
-        resp_rx_ts = dwt_readrxtimestamplo32();
-
-        clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
-
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
-
-        rtd_init = resp_rx_ts - poll_tx_ts;
-        rtd_resp = resp_tx_ts - poll_rx_ts;
-
-        tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-        distance = tof * SPEED_OF_LIGHT;
-
-        snprintf(dist_str, sizeof(dist_str), "%3.2f", distance);
-        test_run_info((unsigned char *)dist_str);
-
-        a2 = atof(dist_str);
-        delay(RNG_DELAY_MS);
-      }
-    }
-  }
-  else
-  {
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-  }
-
-
-
-  //***********************Anchor A3******************************************
-  tx_poll_msg_t0[ALL_MSG_SN_IDX] = frame_seq_nb;
-  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);
-  dwt_writetxdata(sizeof(tx_poll_msg_t0), tx_poll_msg_t0, 0); /* Zero offset in TX buffer. */
-  dwt_writetxfctrl(sizeof(tx_poll_msg_t0), 0, 1);          /* Zero offset in TX buffer, ranging. */
-
-  dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
-
-  while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-  {
-  };
-
-  frame_seq_nb++;
-
-  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
-  {
-    uint32_t frame_len;
-
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
-
-    frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
-    if (frame_len <= sizeof(rx_buffer))
-    {
-      dwt_readrxdata(rx_buffer, frame_len, 0);
-
-      rx_buffer[ALL_MSG_SN_IDX] = 0;
-      if (memcmp(rx_buffer, rx_resp_msg_a3, ALL_MSG_COMMON_LEN) == 0)
-      {
-        uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-        int32_t rtd_init, rtd_resp;
-        float clockOffsetRatio;
-
-        poll_tx_ts = dwt_readtxtimestamplo32();
-        resp_rx_ts = dwt_readrxtimestamplo32();
-
-        clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
-
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-        resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
-
-        rtd_init = resp_rx_ts - poll_tx_ts;
-        rtd_resp = resp_tx_ts - poll_rx_ts;
-
-        tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-        distance = tof * SPEED_OF_LIGHT;
-
-        snprintf(dist_str, sizeof(dist_str), "%3.2f", distance);
-        test_run_info((unsigned char *)dist_str);
-
-        a3 = atof(dist_str);
-        delay(RNG_DELAY_MS);
-      }
-    }
-  }
-  else
-  {
-    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-  }
-
-  if (a0 <= 1){
-      SerialBT.print("a0 = ");
-      a0
-      SerialBT.println(a0);
-  }
-  else{
-
-  }
-
-
-  a0_sum += a0;
-  a1_sum += a1;
-  a2_sum += a2;
-  a3_sum += a3;
-  count++;
-
-  if (a0 <= 1){
-      a0 += 0.05;
-      SerialBT.print("a0 = ");
-      SerialBT.println(a0);
-  }
-  else{
-      a0 -= 0.05;
-      SerialBT.print("a0 = ");
-      SerialBT.println(a0);
-  }
-  delay(100);
-
-  if (a1 <= 1){
-      a1 += 0.05;
-      SerialBT.print("a1 = ");
-      SerialBT.println(a1);
-  }
-  else{
-      a1 -= 0.05;
-      SerialBT.print("a1 = ");
-      SerialBT.println(a1);
-  }
-  delay(100);
-
-  if (a2 <= 1){
-      a2 += 0.05;
-      SerialBT.print("a2 = ");
-      SerialBT.println(a2);
-  }
-  else{
-      a2 -= 0.05;
-      SerialBT.print("a2 = ");
-      SerialBT.println(a2);
-  }
-
-  if (a3 <= 1){
-      a3 += 0.05;
-      SerialBT.print("a3 = ");
-      SerialBT.println(a3);
-  }
-  else{
-      a3 -= 0.05;
-      SerialBT.print("a3 = ");
-      SerialBT.println(a3);
-  }
-  delay(100);
-
-  if (count < 5){
-    return;
-  }
-  
-  a0 = (float)(((int)((a0_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
-  a1 = (float)(((int)((a1_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
-  a2 = (float)(((int)((a2_sum / 5) * 100 + 0.5)) / 100.0 - 0.05);
-  a3 = (float)((int)((a3_sum / 5) * 100 + 0.5)) / 100.0;
-
-  a0_sum = 0; 
-  a1_sum = 0;
-  a2_sum = 0;
-  a3_sum = 0;
-  
-  count = 0;
-
-  Value values[4] = {
-          {a0, fx0, fy0},
-          {a1, fx1, fy1},
-          {a2, fx2, fy2},
-          {a3, fx3, fy3}
-      };
-
-    // 유효한 데이터를 저장할 배열
-    Value filteredValues[4];
-    int validCount = 0;
-
-    // 유효한 데이터 필터링
-    for (int i = 0; i < 4; i++) {
-        if (values[i].a != 0 || values[i].fx != 0 || values[i].fy != 0) {
-            filteredValues[validCount++] = values[i];
-        }
-    }
-
-    // 정렬 (유효한 데이터만 정렬)
-    qsort(filteredValues, validCount, sizeof(Value), compare);
-
-    // 결과 배열 생성
-    float resultArray[validCount * 3];
-    for (int i = 0; i < validCount; i++) {
-        resultArray[i * 3] = filteredValues[i].fx;
-        resultArray[i * 3 + 1] = filteredValues[i].fy;
-        resultArray[i * 3 + 2] = filteredValues[i].a;
-    }
-
-    for (int i = 0; i < 4; i++) {
-        printf("%d,%.1f,%.1f", values[i].a, values[i].fx, values[i].fy);
-        if (i < 3) {
-            printf(","); // 마지막 값이 아니면 쉼표 추가
-      }
-    }
-
-    // tag_location 함수 호출 (유효한 데이터만 전달)
-    if (validCount >= 3) { // 최소 3개의 유효 데이터 필요
-        tag_location(resultArray[0], resultArray[1], resultArray[2],  // 첫 번째 세트
-                     resultArray[3], resultArray[4], resultArray[5],  // 두 번째 세트
-                     resultArray[6], resultArray[7], resultArray[8]);
-    } else {
-        SerialBT.println("유효한 데이터가 부족합니다.");
-    }
+  send_json(closest_distances, 3);
+  delay(1000);  // 1초 간격으로 전송
 }
 
-// 정렬 함수
-int compare(const void *a, const void *b) {
-    Value *val1 = (Value *)a;
-    Value *val2 = (Value *)b;
-    return (val1->a > val2->a) - (val1->a < val2->a); // a 값을 기준으로 오름차순 정렬
+// 거리 계산 함수
+float measure_distance(uint8_t *tx_msg, uint8_t *rx_msg) {
+  tx_msg[2] = frame_seq_nb++;  // 메시지 시퀀스 번호 증가
+  dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_TXFRS_BIT_MASK);  // 상태 레지스터 초기화
+  dwt_writetxdata(sizeof(tx_poll_msg_t0), tx_msg, 0);          // 송신 데이터 설정
+  dwt_writetxfctrl(sizeof(tx_poll_msg_t0), 0, 1);             // 송신 제어 설정
+  dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED); // 송신 시작
+
+  // 수신 완료 또는 오류 대기
+  while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
+  }
+
+  // 수신 성공
+  if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+    dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK); // 상태 초기화
+    dwt_readrxdata(rx_buffer, sizeof(rx_buffer), 0);             // 수신 데이터 읽기
+
+    // 수신 메시지 검증
+    if (memcmp(rx_buffer, rx_msg, sizeof(rx_resp_msg_a0)) == 0) {
+      uint32_t poll_tx_ts = dwt_readtxtimestamplo32();  // 송신 타임스탬프
+      uint32_t resp_rx_ts = dwt_readrxtimestamplo32();  // 수신 타임스탬프
+      tof = (resp_rx_ts - poll_tx_ts) * DWT_TIME_UNITS; // 왕복 시간 계산
+      return tof * SPEED_OF_LIGHT;                     // 거리 반환
+    }
+  }
+  return -1.0;  // 실패 시 -1 반환
 }
 
-void tag_location(float ax1, float ay1, float ar1, float ax2, float ay2, float ar2, float ax3, float ay3, float ar3) {
-    float tA = 2 * (ax2 - ax1);
-    float tB = 2 * (ay2 - ay1);
-    float tC = (ar1 * ar1) - (ar2 * ar2) - (ax1 * ax1) + (ax2 * ax2) - (ay1 * ay1) + (ay2 * ay2);
-    float tD = 2 * (ax3 - ax2);
-    float tE = 2 * (ay3 - ay2);
-    float tF = (ar2 * ar2) - (ar3 * ar3) - (ax2 * ax2) + (ax3 * ax3) - (ay2 * ay2) + (ay3 * ay3);
+// 가장 가까운 3개의 앵커 선택 함수
+void select_closest_anchors(float *distances, int num_anchors) {
+  for (int i = 0; i < 3; i++) {
+    closest_anchors[i] = i; // 초기 인덱스 설정
+  }
 
-    // 분모가 0인지 확인
-    float denominator_x = tE * tA - tB * tD;
-    float denominator_y = tB * tD - tA * tE;
-
-    if (denominator_x == 0 || denominator_y == 0) {
-    return; // 계산을 중단
+  for (int i = 3; i < num_anchors; i++) {
+    for (int j = 0; j < 3; j++) {
+      if (distances[i] < distances[closest_anchors[j]]) {
+        closest_anchors[j] = i;
+        break;
+      }
     }
-
-    if (fabs(denominator_x) < 1e-6 || fabs(denominator_y) < 1e-6) {
-    return; // 계산 중단
-    }
-
-
-    float tx = (tC * tE - tF * tB) / denominator_x;
-    float ty = (tC * tD - tA * tF) / denominator_y;
-
-    SerialBT.print("(x,y) = (");
-    SerialBT.print(tx);
-    SerialBT.print(",");
-    SerialBT.print(ty);
-    SerialBT.println(")");
+  }
 }
-  
+
+// JSON 데이터 전송 함수
+void send_json(float *distances, int num_anchors) {
+  SerialBT.print("{");
+  for (int i = 0; i < num_anchors; i++) {
+    SerialBT.print("\"Anchor");
+    SerialBT.print(i);
+    SerialBT.print("\": ");
+    SerialBT.print(distances[i]);
+    if (i < num_anchors - 1) SerialBT.print(", ");
+  }
+  SerialBT.println("}");
+}
