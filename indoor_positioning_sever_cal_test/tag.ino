@@ -21,6 +21,7 @@ static uint8_t rx_resp_msg_a0[] = {0x41, 0x88, 0, 0xCA, 0xDE, 'A', 'N', 'C', '0'
 
 // 거리 계산 결과 저장 변수
 float distances[4] = {0.0, 0.0, 0.0, 0.0};
+int closest_anchors[3] = {0, 1, 2}; // 가장 가까운 3개의 앵커 인덱스
 
 void setup() {
   SerialBT.begin("ESP32_BT_Module");  // 블루투스 모듈 초기화
@@ -48,8 +49,15 @@ void loop() {
     delay(RNG_DELAY_MS);
   }
 
-  // 거리 데이터 JSON 형식으로 전송
-  send_json(distances, 4);
+  // 가장 가까운 3개의 앵커 선택
+  select_closest_anchors(distances, 4);
+
+  // 선택된 3개의 앵커와 거리 데이터 JSON 형식으로 전송
+  float closest_distances[3];
+  for (int i = 0; i < 3; i++) {
+    closest_distances[i] = distances[closest_anchors[i]];
+  }
+  send_json(closest_distances, 3);
   delay(1000);  // 1초 간격으로 전송
 }
 
@@ -79,6 +87,22 @@ float measure_distance(uint8_t *tx_msg, uint8_t *rx_msg) {
     }
   }
   return -1.0;  // 실패 시 -1 반환
+}
+
+// 가장 가까운 3개의 앵커 선택 함수
+void select_closest_anchors(float *distances, int num_anchors) {
+  for (int i = 0; i < 3; i++) {
+    closest_anchors[i] = i; // 초기 인덱스 설정
+  }
+
+  for (int i = 3; i < num_anchors; i++) {
+    for (int j = 0; j < 3; j++) {
+      if (distances[i] < distances[closest_anchors[j]]) {
+        closest_anchors[j] = i;
+        break;
+      }
+    }
+  }
 }
 
 // JSON 데이터 전송 함수
