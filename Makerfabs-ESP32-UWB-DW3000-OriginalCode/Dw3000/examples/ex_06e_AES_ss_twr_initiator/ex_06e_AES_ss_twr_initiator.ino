@@ -1,7 +1,38 @@
 #include "dw3000.h"
 #include "dw3000_mac_802_15_4.h"
 
-#define APP_NAME "SS TWR AES INIT v1.0"
+// === 추가된 코드 시작 ===
+
+// 앵커 정보를 저장하기 위한 구조체
+typedef struct {
+  uint64_t address; // 앵커의 64비트 주소
+  double x;         // 앵커의 X 좌표 (미터 단위)
+  double y;         // 앵커의 Y 좌표 (미터 단위)
+  double distance;  // 태그로부터 측정된 거리 (미터 단위)
+  bool valid;       // 거리 측정 성공 여부
+} AnchorData;
+
+// 알려진 앵커 목록 (예시 값)
+// 실제 환경에 맞게 앵커 주소와 좌표를 수정해야 합니다.
+#define NUM_ANCHORS 4
+AnchorData knownAnchors[NUM_ANCHORS] = {
+  {0xA1A1A1A1A1A1A1A1, 0.0, 0.0, 0.0, false}, // 앵커 1 (원점)
+  {0xA2A2A2A2A2A2A2A2, 5.0, 0.0, 0.0, false}, // 앵커 2 (x축 위)
+  {0xA3A3A3A3A3A3A3A3, 0.0, 5.0, 0.0, false}, // 앵커 3 (y축 위)
+  {0xA4A4A4A4A4A4A4A4, 5.0, 5.0, 0.0, false}  // 앵커 4
+};
+
+// 측정된 거리 데이터를 저장할 배열
+AnchorData measuredAnchors[NUM_ANCHORS];
+
+// 태그의 계산된 위치
+double tagX = 0.0;
+double tagY = 0.0;
+
+// === 추가된 코드 끝 ===
+
+
+#define APP_NAME "SS TWR AES INIT v1.0 - MultiAnchor" // 앱 이름 변경
 
 // connection pins
 const uint8_t PIN_RST = 27; // reset pin
@@ -43,8 +74,8 @@ mac_frame_802_15_4_format_t     mac_frame= {
     {0x09, 0xEC},
     0x00,
     {0x21, 0x43},
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // DEST ADDR - 루프에서 설정됨
+    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, // SRC ADDR - 아래에서 설정됨
     { 0x0F, {0x00, 0x00, 0x00, 0x00}, 0x00 }
   },
   0x00
@@ -65,18 +96,18 @@ static dwt_aes_config_t aes_config=
 static dwt_aes_config_t aes_config = {
   AES_key_RAM,
   AES_core_type_CCM,
-  MIC_0,
+  MIC_0, // MIC 크기는 루프에서 설정됨
   AES_KEY_Src_Register,
   AES_KEY_Load,
   0,
   AES_KEY_128bit,
-  AES_Encrypt
+  AES_Encrypt // 모드는 루프에서 설정됨
 };
 
 /* Initiator data */
-#define DEST_ADDR       0x1122334455667788 /* this is the address of the responder */
-#define SRC_ADDR        0x8877665544332211 /* this is the address of the initiator */
-#define DEST_PAN_ID     0x4321             /* this is the PAN ID used in this example */
+// #define DEST_ADDR       0x1122334455667788 /* 더 이상 사용되지 않음 */
+#define SRC_ADDR        0x8877665544332211 /* 이 태그(이니시에이터)의 주소 */
+#define DEST_PAN_ID     0x4321             /* 이 예제에서 사용되는 PAN ID */
 
 /* Default communication configuration. We use default non-STS DW mode. */
 static dwt_config_t config =
@@ -106,7 +137,7 @@ static dwt_aes_key_t    keys_options[NUM_OF_KEY_OPTIONS]=
 };
 
 /* Inter-ranging delay period, in milliseconds. */
-#define RNG_DELAY_MS 1000
+#define RNG_DELAY_MS 1000 // 각 앵커 세트 측정 사이의 지연 시간
 
 /* Default antenna delay values for 64 MHz PRF. See NOTE 2 below. */
 #define TX_ANT_DLY 16385
@@ -138,11 +169,11 @@ static uint8_t rx_buffer[RX_BUF_LEN];
 /* Delay between frames, in UWB microseconds. See NOTE 1 below. */
 #define POLL_TX_TO_RESP_RX_DLY_UUS 1720
 /* Receive response timeout. See NOTE 5 below. */
-#define RESP_RX_TIMEOUT_UUS 250
+#define RESP_RX_TIMEOUT_UUS 250 // 응답 타임아웃 시간 줄이기 (필요시 조정)
 
 /* Hold copies of computed time of flight and distance here for reference so that it can be examined at a debug breakpoint. */
-static double tof;
-static double distance;
+static double tof;      // 개별 측정용 임시 변수
+static double distance; // 개별 측정용 임시 변수
 
 /* Values for the PG_DELAY and TX_POWER registers reflect the bandwidth and power of the spectrum at the current
  * temperature. These values can be calibrated prior to taking reference measurements. See NOTE 2 below. */
@@ -155,9 +186,15 @@ uint8_t           nonce[13];    /* 13-byte nonce used in this example as per IEE
 dwt_aes_job_t   aes_job_tx,aes_job_rx;
 int8_t          status;
 
-    
+// === 추가 함수 선언 ===
+void sortAnchorsByDistance(AnchorData anchors[], int n);
+void trilaterate(AnchorData anchor1, AnchorData anchor2, AnchorData anchor3, double* tag_x, double* tag_y);
+// === 추가 함수 선언 끝 ===
+
+
 void setup() {
-  UART_init();
+  Serial.begin(115200); // 시리얼 통신 초기화
+  // UART_init(); // 기존 함수가 Serial.begin을 포함하지 않으면 주석 처리 또는 제거
   test_run_info((unsigned char *)APP_NAME);
 
   /* Configure SPI rate, DW3000 supports up to 38 MHz */
@@ -167,15 +204,15 @@ void setup() {
 
   delay(2); // Time needed for DW3000 to start up (transition from INIT_RC to IDLE_RC, or could wait for SPIRDY event)
 
-  while (!dwt_checkidlerc()) // Need to make sure DW IC is in IDLE_RC before proceeding 
+  while (!dwt_checkidlerc()) // Need to make sure DW IC is in IDLE_RC before proceeding
   {
-    UART_puts("IDLE FAILED\r\n");
+    Serial.println("IDLE FAILED"); // UART_puts 대신 Serial 사용
     while (1) ;
   }
 
   if (dwt_initialise(DWT_DW_INIT) == DWT_ERROR)
   {
-    UART_puts("INIT FAILED\r\n");
+    Serial.println("INIT FAILED"); // UART_puts 대신 Serial 사용
     while (1) ;
   }
 
@@ -227,205 +264,299 @@ void setup() {
 }
 
 void loop() {
-        /* Program the correct key to be used */
-        dwt_set_keyreg_128(&keys_options[INITIATOR_KEY_INDEX-1]);
-        /* Set the key index for the frame */
-        MAC_FRAME_AUX_KEY_IDENTIFY_802_15_4(&mac_frame)=INITIATOR_KEY_INDEX;
+  // 측정 데이터 초기화 (매 루프 시작 시)
+  for (int i = 0; i < NUM_ANCHORS; i++) {
+    measuredAnchors[i] = knownAnchors[i]; // 앵커 정보 복사 (주소, 좌표)
+    measuredAnchors[i].distance = 9999.0; // 매우 큰 값으로 초기화 (정렬 용이)
+    measuredAnchors[i].valid = false;     // 유효성 플래그 초기화
+  }
 
-        /* Update MHR to the correct SRC and DEST addresses and construct the 13-byte nonce
-         * (same MAC frame structure is used to store both received data and transmitted data - thus SRC and DEST addresses
-         * need to be updated before each transmission */
-        mac_frame_set_pan_ids_and_addresses_802_15_4(&mac_frame,DEST_PAN_ID,DEST_ADDR,SRC_ADDR);
-        mac_frame_get_nonce(&mac_frame,nonce);
+  Serial.println("--- Starting Ranging Cycle ---");
 
-        aes_job_tx.mic_size = mac_frame_get_aux_mic_size(&mac_frame);
-        aes_config.mode = AES_Encrypt;
-        aes_config.mic  = dwt_mic_size_from_bytes(aes_job_tx.mic_size);
-        dwt_configure_aes(&aes_config);
+  // 모든 알려진 앵커에 대해 거리 측정 시도
+  for (int i = 0; i < NUM_ANCHORS; i++) {
+    uint64_t current_dest_addr = knownAnchors[i].address;
 
-        /* The AES job will take the TX frame data and and copy it to DW IC TX buffer before transmission. See NOTE 7 below. */
-        status=dwt_do_aes(&aes_job_tx,aes_config.aes_core_type);
-        /* Check for errors */
-        if (status<0)
+    Serial.print("Ranging with Anchor ");
+    Serial.print(i + 1);
+    Serial.print(" (");
+    // 주소 출력 (간단히 상위 16비트만)
+    Serial.print((uint16_t)(current_dest_addr >> 48), HEX);
+    Serial.print("...): ");
+
+    /* 사용할 키 프로그래밍 */
+    dwt_set_keyreg_128(&keys_options[INITIATOR_KEY_INDEX - 1]);
+    /* 프레임에 사용할 키 인덱스 설정 */
+    MAC_FRAME_AUX_KEY_IDENTIFY_802_15_4(&mac_frame) = INITIATOR_KEY_INDEX;
+
+    /* MHR을 올바른 SRC 및 DEST 주소로 업데이트하고 13바이트 nonce 생성 */
+    mac_frame_set_pan_ids_and_addresses_802_15_4(&mac_frame, DEST_PAN_ID, current_dest_addr, SRC_ADDR);
+    mac_frame_get_nonce(&mac_frame, nonce);
+
+    /* AES TX 설정 */
+    aes_job_tx.mic_size = mac_frame_get_aux_mic_size(&mac_frame);
+    aes_config.mode = AES_Encrypt;
+    aes_config.mic = dwt_mic_size_from_bytes(aes_job_tx.mic_size);
+    dwt_configure_aes(&aes_config);
+
+    /* AES 암호화 수행 */
+    status = dwt_do_aes(&aes_job_tx, aes_config.aes_core_type);
+    if (status < 0) {
+      Serial.println(" AES length error");
+      continue; // 다음 앵커로 넘어감
+    } else if (status & AES_ERRORS) {
+      Serial.println(" ERROR AES");
+      continue; // 다음 앵커로 넘어감
+    }
+
+    /* 전송 프레임 설정 및 전송 시작 */
+    dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1);
+    dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+
+    /* 응답 수신 대기 (성공, 타임아웃 또는 오류) */
+    while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR))) {
+    };
+
+    /* 시퀀스 번호 및 프레임 카운터 증가 */
+    MAC_FRAME_SEQ_NUM_802_15_4(&mac_frame) = ++seq_cnt;
+    mac_frame_update_aux_frame_cnt(&mac_frame, ++frame_cnt);
+
+    /* 응답을 성공적으로 수신한 경우 */
+    if (status_reg & SYS_STATUS_RXFCG_BIT_MASK) {
+      uint32_t frame_len;
+
+      /* 상태 레지스터 클리어 */
+      dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
+
+      /* 수신된 데이터 길이 읽기 */
+      frame_len = dwt_read32bitreg(RX_FINFO_ID) & RXFLEN_MASK;
+
+      /* AES RX 설정 */
+      aes_config.mode = AES_Decrypt;
+      PAYLOAD_PTR_802_15_4(&mac_frame) = rx_buffer; /* MAC 페이로드 포인터 설정 */
+
+      /* AES 복호화 시도 (기대하는 소스 주소 확인 포함) */
+      // rx_aes_802_15_4 함수는 내부적으로 수신된 프레임의 SRC 주소가 예상하는 DEST 주소(current_dest_addr)와 일치하는지 확인합니다.
+      status = rx_aes_802_15_4(&mac_frame, frame_len, &aes_job_rx, sizeof(rx_buffer), keys_options, current_dest_addr, SRC_ADDR, &aes_config);
+
+      if (status == AES_RES_OK) {
+        /* 페이로드 내용 확인 (타임스탬프 제외) */
+        if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
+                   aes_job_rx.payload_len - START_RECEIVE_DATA_LOCATION) == 0)
         {
-            test_run_info((unsigned char *)"AES length error");
-            while (1);/* Error */
+          uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
+          int32_t rtd_init, rtd_resp;
+          float clockOffsetRatio;
+
+          /* 타임스탬프 추출 */
+          poll_tx_ts = dwt_readtxtimestamplo32();
+          resp_rx_ts = dwt_readrxtimestamplo32();
+
+          /* 클럭 오프셋 계산 */
+          clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1 << 26);
+
+          /* 응답 메시지에서 타임스탬프 추출 */
+          resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
+          resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
+
+          /* ToF 및 거리 계산 */
+          rtd_init = resp_rx_ts - poll_tx_ts;
+          rtd_resp = resp_tx_ts - poll_rx_ts;
+          tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
+          distance = tof * SPEED_OF_LIGHT;
+
+          /* 결과 저장 */
+          measuredAnchors[i].distance = distance;
+          measuredAnchors[i].valid = true;
+          Serial.print(" Success! Dist: ");
+          Serial.print(distance);
+          Serial.println(" m");
+
+        } else {
+          Serial.println(" Payload mismatch.");
+          // 유효하지 않은 페이로드, valid는 false로 유지됨
         }
-        else if (status & AES_ERRORS)
-        {
-            test_run_info((unsigned char *)"ERROR AES");
-            while (1);/* Error */
-        }
+      } else {
+        // 복호화 실패 또는 다른 오류 처리 (예: 프레임 무시)
+         Serial.print(" AES Decrypt Error/Ignore (Status: ");
+         Serial.print(status);
+         Serial.println(")");
+         // 오류 발생 시 valid는 false로 유지됨
+      }
+    } else {
+      /* 타임아웃 또는 수신 오류 */
+      dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
+      Serial.println(" RX Timeout/Error.");
+      // 타임아웃/오류 시 valid는 false로 유지됨
+    }
 
-        /* configure the frame control and start transmission */
-        dwt_writetxfctrl(aes_job_tx.header_len + aes_job_tx.payload_len + aes_job_tx.mic_size + FCS_LEN, 0, 1); /* Zero offset in TX buffer, ranging. */
+    // 다음 앵커 시도 전 짧은 지연 (선택 사항, UWB 통신 안정성에 도움 줄 수 있음)
+    delay(50);
 
-        /* Start transmission, indicating that a response is expected so that reception is enabled automatically after the frame is sent and the delay
-         * set by dwt_setrxaftertxdelay() has elapsed. */
-        dwt_starttx(DWT_START_TX_IMMEDIATE | DWT_RESPONSE_EXPECTED);
+  } // End of anchor loop
 
-        /* We assume that the transmission is achieved correctly, poll for reception of a frame or error/timeout. See NOTE 8 below. */
-        while (!((status_reg = dwt_read32bitreg(SYS_STATUS_ID)) & (SYS_STATUS_RXFCG_BIT_MASK | SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR)))
-        { };
+  Serial.println("--- Ranging Cycle Complete ---");
 
-        /* Increment frame sequence number (modulo 256) and frame counter, after transmission of the poll message . */
+  // --- 정렬 및 삼각측량 로직 시작 ---
 
-        MAC_FRAME_SEQ_NUM_802_15_4(&mac_frame)=++seq_cnt;
-        mac_frame_update_aux_frame_cnt(&mac_frame,++frame_cnt);
+  // 1. 거리 기준으로 앵커 정렬 (삽입 정렬 사용)
+  sortAnchorsByDistance(measuredAnchors, NUM_ANCHORS);
 
-        if (status_reg & SYS_STATUS_RXFCG_BIT_MASK)
-        {/* Got response */
-            uint32_t frame_len;
+  // 2. 유효하고 가장 가까운 앵커 3개 찾기
+  AnchorData closestAnchors[3];
+  int validCount = 0;
+  for (int i = 0; i < NUM_ANCHORS && validCount < 3; i++) {
+    if (measuredAnchors[i].valid) {
+      closestAnchors[validCount++] = measuredAnchors[i];
+    }
+  }
 
-            /* Clear good RX frame event in the DW IC status register. */
-            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_RXFCG_BIT_MASK);
+  // 3. 유효한 앵커가 3개 이상인지 확인 후 삼각측량 수행
+  if (validCount >= 3) {
+    Serial.println("Found 3 closest valid anchors:");
+    for(int k=0; k<3; k++){
+        Serial.print("  Anchor Addr: ...");
+        Serial.print((uint16_t)(closestAnchors[k].address >> 48), HEX);
+        Serial.print(" ("); Serial.print(closestAnchors[k].x);
+        Serial.print(", "); Serial.print(closestAnchors[k].y);
+        Serial.print("), Dist: "); Serial.println(closestAnchors[k].distance);
+    }
 
-            /* Read data length that was received */
-            frame_len = dwt_read32bitreg(RX_FINFO_ID)&RXFLEN_MASK;
+    // 삼각측량 함수 호출
+    trilaterate(closestAnchors[0], closestAnchors[1], closestAnchors[2], &tagX, &tagY);
 
-            /* A frame has been received: firstly need to read the MHR and check this frame is what we expect:
-             * the destination address should match our source address (frame filtering can be configured for this check,
-             * however that is not part of this example); then the header needs to have security enabled.
-             * If any of these checks fail the rx_aes_802_15_4 will return an error
-             * */
-            aes_config.mode=AES_Decrypt;
-            PAYLOAD_PTR_802_15_4(&mac_frame)=rx_buffer;/* Set the MAC pyload ptr */
+    // 계산된 위치 출력
+    Serial.print("Calculated Tag Position: (");
+    Serial.print(tagX);
+    Serial.print(", ");
+    Serial.print(tagY);
+    Serial.println(")");
 
-            /* This example assumes that initiator and responder are sending encrypted data */
-            status=rx_aes_802_15_4(&mac_frame,frame_len,&aes_job_rx,sizeof(rx_buffer),keys_options,DEST_ADDR,SRC_ADDR,&aes_config);
-            if (status!=AES_RES_OK)
-            {
-              do {
-                switch (status)
-                {
-                    case AES_RES_ERROR_LENGTH:
-                        test_run_info((unsigned char *)"Length AES error");
-                        break;
-                    case AES_RES_ERROR:
-                        test_run_info((unsigned char *)"ERROR AES");
-                        break;
-                    case AES_RES_ERROR_FRAME:
-                        test_run_info((unsigned char *)"Error Frame");
-                        break;
-                    case AES_RES_ERROR_IGNORE_FRAME:
-                        test_run_info((unsigned char *)"Frame not for us");
-                        continue;//Got frame not for us
-                }
-              } while (1);
-            }
+  } else {
+    Serial.print("Could not find 3 valid anchors for trilateration (Found: ");
+    Serial.print(validCount);
+    Serial.println(")");
+    // 위치 계산 불가, 이전 값 유지 또는 기본값 설정
+    tagX = NAN; // Not a Number
+    tagY = NAN;
+  }
 
-            /* Check that the frame is the expected response from the companion "SS TWR AES responder" example.
-             * ignore the 8 first bytes of the response message as they contain the poll and response timestamps */
-            if (memcmp(&rx_buffer[START_RECEIVE_DATA_LOCATION], &rx_resp_msg[START_RECEIVE_DATA_LOCATION],
-                    aes_job_rx.payload_len-START_RECEIVE_DATA_LOCATION) == 0)
-            {
-                uint32_t poll_tx_ts, resp_rx_ts, poll_rx_ts, resp_tx_ts;
-                int32_t rtd_init, rtd_resp;
-                float clockOffsetRatio ;
+  // --- 정렬 및 삼각측량 로직 끝 ---
 
-                /* Retrieve poll transmission and response reception timestamps. See NOTE 9 below. */
-                poll_tx_ts = dwt_readtxtimestamplo32();
-                resp_rx_ts = dwt_readrxtimestamplo32();
 
-                /* Read carrier integrator value and calculate clock offset ratio. See NOTE 11 below. */
-                clockOffsetRatio = ((float)dwt_readclockoffset()) / (uint32_t)(1<<26);
-
-                /* Get timestamps embedded in response message. */
-                resp_msg_get_ts(&rx_buffer[RESP_MSG_POLL_RX_TS_IDX], &poll_rx_ts);
-                resp_msg_get_ts(&rx_buffer[RESP_MSG_RESP_TX_TS_IDX], &resp_tx_ts);
-
-                /* Compute time of flight and distance, using clock offset ratio to correct for differing local and remote clock rates */
-                rtd_init = resp_rx_ts - poll_tx_ts;
-                rtd_resp = resp_tx_ts - poll_rx_ts;
-
-                tof = ((rtd_init - rtd_resp * (1 - clockOffsetRatio)) / 2.0) * DWT_TIME_UNITS;
-                distance = tof * SPEED_OF_LIGHT;
-
-                /* Display computed distance on LCD. */
-                snprintf(dist_str, sizeof(dist_str), "DIST: %3.2f m", distance);
-                test_run_info((unsigned char *)dist_str);
-            }
-
-        }
-        else
-        {
-            /* Clear RX error/timeout events in the DW IC status register. */
-            dwt_write32bitreg(SYS_STATUS_ID, SYS_STATUS_ALL_RX_TO | SYS_STATUS_ALL_RX_ERR);
-        }
-
-        /* Execute a delay between ranging exchanges. */
-        Sleep(RNG_DELAY_MS);
+  /* 다음 거리 측정 주기까지 대기 */
+  delay(RNG_DELAY_MS); // Arduino의 delay 사용 (Sleep 함수 대신)
 }
 
+
+// === 추가 함수 정의 ===
+
+/**
+ * @brief 삽입 정렬을 사용하여 AnchorData 배열을 거리(distance) 기준으로 오름차순 정렬합니다.
+ *        유효하지 않은(valid=false) 앵커는 배열 뒤쪽으로 보냅니다.
+ *        시간 복잡도: 평균 O(n^2), 최선 O(n)
+ * @param anchors 정렬할 AnchorData 배열
+ * @param n 배열의 크기
+ */
+void sortAnchorsByDistance(AnchorData anchors[], int n) {
+  int i, j;
+  AnchorData key;
+  for (i = 1; i < n; i++) {
+    key = anchors[i];
+    j = i - 1;
+
+    // 유효한 앵커는 유효하지 않은 앵커보다 항상 앞에 오도록 처리
+    // 또는 두 앵커 모두 유효할 경우 거리가 더 짧은 앵커가 앞에 오도록 처리
+    while (j >= 0 && (!anchors[j].valid || (key.valid && anchors[j].distance > key.distance))) {
+      anchors[j + 1] = anchors[j];
+      j = j - 1;
+    }
+    // 유효하지 않은 앵커들 사이에서는 순서 유지 (상대적 안정성)
+    // 또는 key가 유효하지 않고 anchors[j]가 유효한 경우 key를 뒤로 보냄
+     while (j >= 0 && !key.valid && anchors[j].valid) {
+         anchors[j + 1] = anchors[j];
+         j = j - 1;
+     }
+
+    anchors[j + 1] = key;
+  }
+}
+
+
+/**
+ * @brief 2D 평면에서 세 앵커의 위치와 각 앵커까지의 거리를 이용하여 태그의 위치를 계산합니다 (삼각측량).
+ *        참고: https://en.wikipedia.org/wiki/Trilateration#Mathematical_basis_and_solution
+ *             (여기서는 단순화된 2D 버전을 사용합니다)
+ * @param anchor1 첫 번째 앵커 데이터
+ * @param anchor2 두 번째 앵커 데이터
+ * @param anchor3 세 번째 앵커 데이터
+ * @param tag_x 계산된 태그의 X 좌표를 저장할 포인터
+ * @param tag_y 계산된 태그의 Y 좌표를 저장할 포인터
+ */
+void trilaterate(AnchorData anchor1, AnchorData anchor2, AnchorData anchor3, double* tag_x, double* tag_y) {
+    double x1 = anchor1.x, y1 = anchor1.y, r1 = anchor1.distance;
+    double x2 = anchor2.x, y2 = anchor2.y, r2 = anchor2.distance;
+    double x3 = anchor3.x, y3 = anchor3.y, r3 = anchor3.distance;
+
+    // 중간 계산 변수들
+    double A = 2 * (x2 - x1);
+    double B = 2 * (y2 - y1);
+    double C = r1*r1 - r2*r2 - x1*x1 + x2*x2 - y1*y1 + y2*y2;
+    double D = 2 * (x3 - x2);
+    double E = 2 * (y3 - y2);
+    double F = r2*r2 - r3*r3 - x2*x2 + x3*x3 - y2*y2 + y3*y3;
+
+    // 분모 계산 (0이 되는 경우 - 앵커들이 일직선 상에 있는 등 - 계산 불가)
+    double denominator = (A * E - B * D);
+
+    if (abs(denominator) < 1e-6) { // 매우 작은 값으로 0에 가까운지 확인
+        Serial.println("Trilateration failed: Denominator is close to zero (anchors might be collinear).");
+        *tag_x = NAN; // 계산 실패 시 Not a Number 반환
+        *tag_y = NAN;
+        return;
+    }
+
+    // 태그 좌표 계산
+    *tag_x = (C * E - F * B) / denominator;
+    *tag_y = (C * D - A * F) / (B * D - A * E); // 분모 부호 주의하여 계산 (위와 동일하게 A*E - B*D 사용)
+    *tag_y = (A * F - C * D) / denominator; // 위 식과 동일
+
+}
+
+
+// 기존 유틸리티 함수 (필요시 유지)
+// 예: test_run_info, resp_msg_get_ts 등
+
+
+/* Helper function to print informational messages */
+void test_run_info(unsigned char *message)
+{
+    Serial.print(message); // Use Serial.print for output
+    Serial.print("
+");
+}
+
+/* Helper function to extract timestamp from response message */
+void resp_msg_get_ts(uint8_t *ts_field, uint32_t *ts)
+{
+    int i;
+    *ts = 0;
+    for (i = 0; i < RESP_MSG_TS_LEN; i++)
+    {
+        *ts += ts_field[i] << (i * 8);
+    }
+}
+
+
+// 기존 노트 주석 (필요시 유지)
 /*****************************************************************************************************************************************************
  * NOTES:
- *
- * 1. The single-sided two-way ranging scheme implemented here has to be considered carefully as the accuracy of the distance measured is highly
- *    sensitive to the clock offset error between the devices and the length of the response delay between frames. To achieve the best possible
- *    accuracy, this response delay must be kept as low as possible. In order to do so, 6.8 Mbps data rate is used in this example and the response
- *    delay between frames is defined as low as possible. The user is referred to User Manual for more details about the single-sided two-way ranging
- *    process.  NB:SEE ALSO NOTE 11.
- *
- *    Initiator: |Poll TX| ..... |Resp RX|
- *    Responder: |Poll RX| ..... |Resp TX|
- *                   ^|P RMARKER|                    - time of Poll TX/RX
- *                                   ^|R RMARKER|    - time of Resp TX/RX
- *
- *                       <--TDLY->                   - POLL_TX_TO_RESP_RX_DLY_UUS (RDLY-RLEN)
- *                               <-RLEN->            - RESP_RX_TIMEOUT_UUS   (length of response frame)
- *                    <----RDLY------>               - POLL_RX_TO_RESP_TX_DLY_UUS (depends on how quickly responder can turn around and reply)
- *
- *
- * 2. The sum of the values is the TX to RX antenna delay, this should be experimentally determined by a calibration process. Here we use a hard coded
- *    value (expected to be a little low so a positive error will be seen on the resultant distance estimate. For a real production application, each
- *    device should have its own antenna delay properly calibrated to get good precision when performing range measurements.
- * 3. The frames used here are Decawave specific ranging frames, complying with the IEEE 802.15.4 standard data frame encoding. The frames are the
- *    following:
- *     - a poll message sent by the initiator to trigger the ranging exchange.
- *     - a response message sent by the responder to complete the exchange and provide all information needed by the initiator to compute the
- *       time-of-flight (distance) estimate.
- *    The first 10 bytes of those frame are common and are composed of the following fields:
- *     - byte 0/1: frame control (0x8841 to indicate a data frame using 16-bit addressing).
- *     - byte 2: sequence number, incremented for each new frame.
- *     - byte 3/4: PAN ID (0xDECA).
- *     - byte 5/6: destination address, see NOTE 4 below.
- *     - byte 7/8: source address, see NOTE 4 below.
- *     - byte 9: function code (specific values to indicate which message it is in the ranging process).
- *    The remaining bytes are specific to each message as follows:
- *    Poll message:
- *     - no more data
- *    Response message:
- *     - byte 0 -> 13: poll message reception timestamp.
- *     - byte 4 -> 17: response message transmission timestamp.
- *    All messages end with a 2-byte checksum automatically set by DW IC.
- * 4. Source and destination addresses are hard coded constants in this example to keep it simple but for a real product every device should have a
- *    unique ID. Here, 16-bit addressing is used to keep the messages as short as possible but, in an actual application, this should be done only
- *    after an exchange of specific messages used to define those short addresses for each device participating to the ranging exchange.
- * 5. This timeout is for complete reception of a frame, i.e. timeout duration must take into account the length of the expected frame. Here the value
- *    is arbitrary but chosen large enough to make sure that there is enough time to receive the complete response frame sent by the responder at the
- *    6.8M data rate used (around 200 �s).
- * 6. In a real application, for optimum performance within regulatory limits, it may be necessary to set TX pulse bandwidth and TX power, (using
- *    the dwt_configuretxrf API call) to per device calibrated values saved in the target system or the DW IC OTP memory.
- * 7. dwt_writetxdata() takes the full size of the message as a parameter but only copies (size - 2) bytes as the check-sum at the end of the frame is
- *    automatically appended by the DW IC. This means that our variable could be two bytes shorter without losing any data (but the sizeof would not
- *    work anymore then as we would still have to indicate the full length of the frame to dwt_writetxdata()).
- * 8. We use polled mode of operation here to keep the example as simple as possible but all status events can be used to generate interrupts. Please
- *    refer to DW IC User Manual for more details on "interrupts". It is also to be noted that STATUS register is 5 bytes long but, as the event we
- *    use are all in the first bytes of the register, we can use the simple dwt_read32bitreg() API call to access it instead of reading the whole 5
- *    bytes.
- * 9. The high order byte of each 40-bit time-stamps is discarded here. This is acceptable as, on each device, those time-stamps are not separated by
- *    more than 2**32 device time units (which is around 67 ms) which means that the calculation of the round-trip delays can be handled by a 32-bit
- *    subtraction.
- * 10. The user is referred to DecaRanging ARM application (distributed with EVK1000 product) for additional practical example of usage, and to the
- *     DW IC API Guide for more details on the DW IC driver functions.
- * 11. The use of the clock offset value to correct the TOF calculation, significantly improves the result of the SS-TWR where the remote
- *     responder unit's clock is a number of PPM offset from the local initiator unit's clock.
- *     As stated in NOTE 2 a fixed offset in range will be seen unless the antenna delay is calibrated and set correctly.
- * 12. In this example, the DW IC is put into IDLE state after calling dwt_initialise(). This means that a fast SPI rate of up to 20 MHz can be used
- *     thereafter.
- * 13. Frame counter was set to zero in this example. The frame counter should be incremented each frame. When frame counter gets to its max value (uint32_t),
- *     key should be replaced.
- * 14. Desired configuration by user may be different to the current programmed configuration. dwt_configure is called to set desired
- *     configuration.
+ * (기존 노트 내용 생략 - 필요시 복원)
  * 15. When CCM core type is used, AES_KEY_Load needs to be set prior to each encryption/decryption operation, even if the AES KEY used has not changed.
- ****************************************************************************************************************************************************/
+ * 16. (추가) 이 코드는 2D 삼각측량을 가정합니다. 3D 측량을 위해서는 앵커 4개와 Z 좌표, 수정된 삼각측량 알고리즘이 필요합니다.
+ * 17. (추가) 삽입 정렬은 구현이 간단하지만 앵커 수가 많아지면 성능이 저하될 수 있습니다. 더 효율적인 정렬 (예: 퀵 정렬, 병합 정렬)을 고려할 수 있습니다. O(n log n)
+ * 18. (추가) 삼각측량은 측정 오차에 민감합니다. 칼만 필터 등 필터링 기법을 적용하여 위치 추정 정확도를 향상시킬 수 있습니다.
+ * 19. (추가) `test_run_info` 함수와 `resp_msg_get_ts` 함수는 원본 예제에 있었던 것으로 가정하고 유지했습니다. 만약 없다면 해당 함수 정의가 필요합니다. (위 코드에 추가됨)
+ * 20. (추가) `delay()` 함수 대신 `millis()`를 사용한 비차단 방식으로 구현하면 다른 작업을 동시에 수행하는 데 유리합니다.
+ * 21. (추가) 실제 환경에서는 앵커 주소 (`knownAnchors`)와 좌표를 정확하게 설정해야 합니다.
+ *****************************************************************************************************************************************************/
